@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -14,7 +15,6 @@ import (
 	"github.com/go-chi/cors"
 )
 
-// UploadHandler handles file uploads and saves the file at a custom location
 func UploadHandler(w http.ResponseWriter, r *http.Request) {
 	// Parse the multipart form to retrieve file data
 	err := r.ParseMultipartForm(10 << 20) // Limit file size to 10 MB
@@ -37,14 +37,16 @@ func UploadHandler(w http.ResponseWriter, r *http.Request) {
 		folderName = chi.URLParam(r, "folderName") // Fallback to folderName parameter in URL
 	}
 
+	// If no folder name is provided, default to "misc"
+	if folderName == "" || folderName == "undefined" {
+		folderName = "misc"
+	}
+
 	// Define the base directory for file uploads
 	uploadDir := "./uploads"
 
 	// If a folder name is provided, create the folder path
-	if folderName != "" {
-		// Create the folder path inside the base directory
-		uploadDir = filepath.Join(uploadDir, folderName)
-	}
+	uploadDir = filepath.Join(uploadDir, folderName)
 
 	// Create the target directory if it doesn't exist
 	if err := os.MkdirAll(uploadDir, os.ModePerm); err != nil {
@@ -75,6 +77,15 @@ func ListFilesHandler(w http.ResponseWriter, r *http.Request) {
 	// Define the directory where files are uploaded
 	uploadDir := "./uploads"
 
+	// Check if the uploads directory exists
+	_, err := os.Stat(uploadDir)
+	if os.IsNotExist(err) {
+		// If the directory doesn't exist, return an empty list
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte("[]"))
+		return
+	}
+
 	// Open the upload directory
 	dir, err := os.Open(uploadDir)
 	if err != nil {
@@ -87,6 +98,13 @@ func ListFilesHandler(w http.ResponseWriter, r *http.Request) {
 	entries, err := dir.Readdir(0) // 0 means read all files/folders
 	if err != nil {
 		http.Error(w, "Unable to read files in the directory", http.StatusInternalServerError)
+		return
+	}
+
+	// If no files or folders exist, return an empty array
+	if len(entries) == 0 {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte("[]"))
 		return
 	}
 
@@ -111,13 +129,6 @@ func ListFilesHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Send the response as JSON
 	w.Header().Set("Content-Type", "application/json")
-	if len(fileItems) == 0 {
-		// Return an empty array if no files or folders found
-		w.Write([]byte("[]"))
-		return
-	}
-
-	// Return the JSON response
 	response, err := json.Marshal(fileItems)
 	if err != nil {
 		http.Error(w, "Unable to marshal JSON", http.StatusInternalServerError)
@@ -184,6 +195,16 @@ func ListFilesInFolderHandler(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, "Unable to read files in the folder", http.StatusInternalServerError)
 		return
+	}
+
+	// Get the query parameter for sorting by date (optional)
+	sortByDate := r.URL.Query().Get("sortByDate")
+
+	// Sort entries by creation time if requested
+	if sortByDate == "true" {
+		sort.Slice(entries, func(i, j int) bool {
+			return entries[i].ModTime().Before(entries[j].ModTime())
+		})
 	}
 
 	// Create a slice to store file/folder info
