@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -54,6 +55,43 @@ func UploadHandler(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("File uploaded successfully"))
 }
 
+// ListFilesHandler lists all files in the upload directory
+func ListFilesHandler(w http.ResponseWriter, r *http.Request) {
+	// Define the directory where files are uploaded
+	uploadDir := "./uploads"
+
+	// Open the upload directory
+	dir, err := os.Open(uploadDir)
+	if err != nil {
+		http.Error(w, "Unable to open the directory", http.StatusInternalServerError)
+		return
+	}
+	defer dir.Close()
+
+	// Read all files in the directory
+	files, err := dir.Readdirnames(0) // 0 means read all files
+	if err != nil {
+		http.Error(w, "Unable to read files in the directory", http.StatusInternalServerError)
+		return
+	}
+
+	// Send a response with the file names
+	if len(files) == 0 {
+		w.Write([]byte("No files found"))
+		return
+	}
+
+	// Format the list of files as a response
+	for i, file := range files {
+		// If it's not the last file, append a newline character
+		if i < len(files)-1 {
+			w.Write([]byte(fmt.Sprintf("%s\n", file)))
+		} else {
+			w.Write([]byte(fmt.Sprintf("%s", file))) // Don't append newline for the last file
+		}
+	}
+}
+
 func main() {
 	r := chi.NewRouter()
 
@@ -63,7 +101,10 @@ func main() {
 
 	// Enable CORS for requests from the frontend (http://localhost:5173)
 	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins:   []string{"http://localhost:5173"}, // Allow frontend origin
+		AllowedOrigins: []string{
+			"http://localhost:5173",                 // Local development frontend
+			"https://store-frontend-red.vercel.app", // Production frontend
+		},
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE"},
 		AllowedHeaders:   []string{"Content-Type", "Authorization"},
 		AllowCredentials: true,
@@ -76,6 +117,9 @@ func main() {
 
 	// Add the /upload route for handling file uploads
 	r.Post("/upload", UploadHandler)
+
+	// Add the /files route to list all uploaded files
+	r.Get("/files", ListFilesHandler)
 
 	// Start the server
 	http.ListenAndServe(":8080", r)
