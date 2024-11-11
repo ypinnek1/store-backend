@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -221,6 +222,90 @@ func ListFilesInFolderHandler(w http.ResponseWriter, r *http.Request) {
 	w.Write(response)
 }
 
+// SearchHandler handles searching for files and folders
+func SearchHandler(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query().Get("q")
+	if query == "" {
+		http.Error(w, "Query parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	// Define the base directory for search
+	baseDir := "./uploads"
+
+	var results []map[string]string
+
+	// Walk through the directory to find matching files/folders
+	err := filepath.Walk(baseDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		// Match the file/folder name with the search query
+		if strings.Contains(strings.ToLower(info.Name()), strings.ToLower(query)) {
+			item := map[string]string{
+				"name": info.Name(),
+				"type": "folder",
+			}
+			if !info.IsDir() {
+				item["type"] = "file"
+			}
+			results = append(results, item)
+		}
+		return nil
+	})
+
+	if err != nil {
+		http.Error(w, "Error searching for files", http.StatusInternalServerError)
+		return
+	}
+
+	// Return the search results as JSON
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(results)
+}
+
+func DownloadHandler(w http.ResponseWriter, r *http.Request) {
+	// Get the file name from the URL parameters
+	fileName := chi.URLParam(r, "fileName")
+	if fileName == "" {
+		http.Error(w, "File name is required", http.StatusBadRequest)
+		return
+	}
+
+	// Define the base directory where files are stored
+	uploadDir := "./uploads" // Change this to your desired directory
+
+	// Construct the full file path
+	filePath := filepath.Join(uploadDir, fileName)
+
+	// Check if the file exists and is not a directory
+	fileInfo, err := os.Stat(filePath)
+	if os.IsNotExist(err) || fileInfo.IsDir() {
+		http.Error(w, "File not found", http.StatusNotFound)
+		return
+	}
+
+	// Set headers for file download
+	w.Header().Set("Content-Disposition", "attachment; filename="+fileInfo.Name())
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", fileInfo.Size()))
+
+	// Open the file
+	file, err := os.Open(filePath)
+	if err != nil {
+		http.Error(w, "Unable to open the file", http.StatusInternalServerError)
+		return
+	}
+	defer file.Close()
+
+	// Copy the file content to the response writer
+	_, err = io.Copy(w, file)
+	if err != nil {
+		http.Error(w, "Error serving the file", http.StatusInternalServerError)
+		return
+	}
+}
+
 func main() {
 	r := chi.NewRouter()
 
@@ -254,6 +339,11 @@ func main() {
 	r.Post("/createFolder/{folderName}", CreateFolderHandler)
 
 	r.Get("/files/{folderName}", ListFilesInFolderHandler)
+
+	// Add the /search route to search for files
+	r.Get("/search", SearchHandler)
+
+	r.Get("/download/{fileName}", DownloadHandler)
 
 	// Start the server
 	http.ListenAndServe(":8080", r)
