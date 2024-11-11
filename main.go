@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -29,8 +30,22 @@ func UploadHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	// Define the custom folder to save the uploaded file
-	uploadDir := "./uploads" // Change this to your desired location
+	// Get the folder name from the form or URL parameters (if provided)
+	folderName := r.FormValue("folder") // Use "folder" form field for folder name
+	if folderName == "" {
+		folderName = chi.URLParam(r, "folderName") // Fallback to folderName parameter in URL
+	}
+
+	// Define the base directory for file uploads
+	uploadDir := "./uploads"
+
+	// If a folder name is provided, create the folder path
+	if folderName != "" {
+		// Create the folder path inside the base directory
+		uploadDir = filepath.Join(uploadDir, folderName)
+	}
+
+	// Create the target directory if it doesn't exist
 	if err := os.MkdirAll(uploadDir, os.ModePerm); err != nil {
 		http.Error(w, "Unable to create upload directory", http.StatusInternalServerError)
 		return
@@ -55,7 +70,6 @@ func UploadHandler(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("File uploaded successfully"))
 }
 
-// ListFilesHandler lists all files in the upload directory
 func ListFilesHandler(w http.ResponseWriter, r *http.Request) {
 	// Define the directory where files are uploaded
 	uploadDir := "./uploads"
@@ -68,28 +82,143 @@ func ListFilesHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer dir.Close()
 
-	// Read all files in the directory
-	files, err := dir.Readdirnames(0) // 0 means read all files
+	// Read all files and folders in the directory
+	entries, err := dir.Readdir(0) // 0 means read all files/folders
 	if err != nil {
 		http.Error(w, "Unable to read files in the directory", http.StatusInternalServerError)
 		return
 	}
 
-	// Send a response with the file names
-	if len(files) == 0 {
-		w.Write([]byte("No files found"))
+	// Create a slice to store file/folder info
+	var fileItems []map[string]string
+
+	// Loop through each entry in the directory
+	for _, entry := range entries {
+		item := make(map[string]string)
+		item["name"] = entry.Name()
+
+		// Determine if it's a folder or file
+		if entry.IsDir() {
+			item["type"] = "folder"
+		} else {
+			item["type"] = "file"
+		}
+
+		// Append the item to the list
+		fileItems = append(fileItems, item)
+	}
+
+	// Send the response as JSON
+	w.Header().Set("Content-Type", "application/json")
+	if len(fileItems) == 0 {
+		// Return an empty array if no files or folders found
+		w.Write([]byte("[]"))
 		return
 	}
 
-	// Format the list of files as a response
-	for i, file := range files {
-		// If it's not the last file, append a newline character
-		if i < len(files)-1 {
-			w.Write([]byte(fmt.Sprintf("%s\n", file)))
-		} else {
-			w.Write([]byte(fmt.Sprintf("%s", file))) // Don't append newline for the last file
-		}
+	// Return the JSON response
+	response, err := json.Marshal(fileItems)
+	if err != nil {
+		http.Error(w, "Unable to marshal JSON", http.StatusInternalServerError)
+		return
 	}
+	w.Write(response)
+}
+
+// CreateFolderHandler creates a new folder on the server
+func CreateFolderHandler(w http.ResponseWriter, r *http.Request) {
+	// Get the folder name from the URL parameters
+	folderName := chi.URLParam(r, "folderName")
+	if folderName == "" {
+		http.Error(w, "Folder name is required", http.StatusBadRequest)
+		return
+	}
+
+	// Define the parent directory for folder creation
+	uploadDir := "./uploads" // Change this to your desired parent directory
+
+	// Create the folder at the specified location
+	newFolderPath := filepath.Join(uploadDir, folderName)
+	err := os.MkdirAll(newFolderPath, os.ModePerm)
+	if err != nil {
+		http.Error(w, "Unable to create the folder", http.StatusInternalServerError)
+		return
+	}
+
+	// Send a response back to the client
+	w.Write([]byte(fmt.Sprintf("Folder '%s' created successfully", folderName)))
+}
+
+// ListFilesInFolderHandler lists all files and folders inside a specified folder
+func ListFilesInFolderHandler(w http.ResponseWriter, r *http.Request) {
+	// Get the folder name from the URL parameters
+	folderName := chi.URLParam(r, "folderName")
+	if folderName == "" {
+		http.Error(w, "Folder name is required", http.StatusBadRequest)
+		return
+	}
+
+	// Define the parent directory where folders are stored
+	uploadDir := "./uploads" // Change this to your desired parent directory
+
+	// Get the full path of the folder
+	folderPath := filepath.Join(uploadDir, folderName)
+
+	// Check if the folder exists
+	if _, err := os.Stat(folderPath); os.IsNotExist(err) {
+		http.Error(w, "Folder does not exist", http.StatusNotFound)
+		return
+	}
+
+	// Open the folder
+	dir, err := os.Open(folderPath)
+	if err != nil {
+		http.Error(w, "Unable to open the folder", http.StatusInternalServerError)
+		return
+	}
+	defer dir.Close()
+
+	// Read all files and folders in the directory
+	entries, err := dir.Readdir(0) // 0 means read all files/folders
+	if err != nil {
+		http.Error(w, "Unable to read files in the folder", http.StatusInternalServerError)
+		return
+	}
+
+	// Create a slice to store file/folder info
+	var fileItems []map[string]string
+
+	// Loop through each entry in the directory
+	for _, entry := range entries {
+		item := make(map[string]string)
+		item["name"] = entry.Name()
+
+		// Determine if it's a folder or file
+		if entry.IsDir() {
+			item["type"] = "folder"
+		} else {
+			item["type"] = "file"
+		}
+
+		// Append the item to the list
+		fileItems = append(fileItems, item)
+	}
+
+	// Send the response as JSON
+	w.Header().Set("Content-Type", "application/json")
+	if len(fileItems) == 0 {
+		// Return an empty array if no files or folders found
+		w.Write([]byte("[]"))
+		return
+	}
+
+	// Return the JSON response
+	response, err := json.Marshal(fileItems)
+	if err != nil {
+		http.Error(w, "Unable to marshal JSON", http.StatusInternalServerError)
+		return
+	}
+	w.Write(response)
 }
 
 func main() {
@@ -120,6 +249,11 @@ func main() {
 
 	// Add the /files route to list all uploaded files
 	r.Get("/files", ListFilesHandler)
+
+	// Add the /createFolder route to create a new folder
+	r.Post("/createFolder/{folderName}", CreateFolderHandler)
+
+	r.Get("/files/{folderName}", ListFilesInFolderHandler)
 
 	// Start the server
 	http.ListenAndServe(":8080", r)
