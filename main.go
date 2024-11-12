@@ -339,9 +339,10 @@ func main() {
 		AllowedOrigins: []string{
 			"http://localhost:5173",                 // Local development frontend
 			"https://store-frontend-red.vercel.app", // Production frontend
+			"https://aa8d-67-170-199-42.ngrok-free.app",
 		},
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE"},
-		AllowedHeaders:   []string{"Content-Type", "Authorization"},
+		AllowedHeaders:   []string{"Content-Type", "Authorization", "ngrok-skip-browser-warning"},
 		AllowCredentials: true,
 	}))
 
